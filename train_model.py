@@ -1,45 +1,7 @@
-# import pandas as pd
-# from sklearn.model_selection import train_test_split
-# from sklearn.ensemble import RandomForestClassifier
-# from sklearn.preprocessing import LabelEncoder
-# import joblib
-
-# CSV_FILE = "data.csv"
-# MODEL_FILE = "gas_model.pkl"
-
-# # Ler dados
-# df = pd.read_csv(CSV_FILE)
-
-# # Ignorar linhas com gas_index 99 ou 100 (não usadas para treino)
-# df = df[~df['gas_index'].isin([99, 100])]
-
-# # Selecionar features (valores numéricos do sensor)
-# features = ['millis','gas_index','mes_index','temperature','pressure','humidity','gas_resistance']
-# X = df[features]
-
-# # Label encoding
-# le = LabelEncoder()
-# y = le.fit_transform(df['label'])
-
-# # Separar treino e teste
-# X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# # Treinar modelo
-# clf = RandomForestClassifier(n_estimators=100, random_state=42)
-# clf.fit(X_train, y_train)
-
-# # Avaliação
-# acc = clf.score(X_test, y_test)
-# print(f"Acurácia no teste: {acc*100:.2f}%")
-
-# # Salvar modelo e encoder
-# joblib.dump((clf, le), MODEL_FILE)
-# print(f"Modelo salvo em: {MODEL_FILE}")
-
-
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import classification_report, confusion_matrix
 import joblib
 import os
 
@@ -47,50 +9,69 @@ MODEL_FILE = "gas_model.pkl"
 
 def incremental_train(new_csv_files):
     """
-    Atualiza o modelo RandomForest com novos arquivos CSV.
+    Incrementally trains or retrains a RandomForest model with new CSV files.
     """
-    # Carregar modelo existente ou criar novo
+    # Load model if exists
     if os.path.exists(MODEL_FILE):
         clf, le = joblib.load(MODEL_FILE)
-        print("Modelo existente carregado.")
-        # Carregar histórico de dados já treinados (opcional)
-        all_data = pd.DataFrame()  # você pode manter histórico em arquivo
+        print("Loaded existing model.")
     else:
         clf = RandomForestClassifier(n_estimators=100, random_state=42)
         le = LabelEncoder()
-        all_data = pd.DataFrame()
-        print("Criando novo modelo.")
+        print("Created new model.")
 
-    # Carregar novos arquivos CSV e concatenar
+    # Load new CSV files
     new_dfs = []
     for csv_file in new_csv_files:
         df = pd.read_csv(csv_file)
-        df = df[~df['gas_index'].isin([99, 100])]  # ignora gas_index inválido
+        df = df[~df['gas_index'].isin([99, 100])]  # ignore invalid indexes
         new_dfs.append(df)
-    new_data = pd.concat(new_dfs, ignore_index=True)
+    data = pd.concat(new_dfs, ignore_index=True)
 
-    # Concatenar com dados antigos se quiser manter histórico
-    if not all_data.empty:
-        df_all = pd.concat([all_data, new_data], ignore_index=True)
-    else:
-        df_all = new_data
-
-    # Features e labels
+    # Features and labels
     features = ['millis','gas_index','mes_index','temperature','pressure','humidity','gas_resistance']
-    X = df_all[features]
+    X = data[features]
+    y = le.fit_transform(data['label'])
 
-    # Label encoding
-    y = le.fit_transform(df_all['label'])
+    # Train and test split for evaluation
+    from sklearn.model_selection import train_test_split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    # Treinar modelo
-    clf.fit(X, y)
-    print(f"Modelo treinado com {len(df_all)} amostras.")
+    # Train model
+    clf.fit(X_train, y_train)
+    print(f"Model trained with {len(data)} samples.")
 
-    # Salvar modelo atualizado
+    # Predictions
+    y_pred = clf.predict(X_test)
+
+    # Accuracy, precision, recall, f1
+    print("\n=== Model Evaluation ===")
+    print(classification_report(y_test, y_pred, target_names=le.classes_))
+
+    # Confusion matrix
+    cm = confusion_matrix(y_test, y_pred)
+    print("\nConfusion Matrix:")
+    print(cm)
+
+    # Calculate false positives and false negatives
+    FP = cm.sum(axis=0) - cm.diagonal()
+    FN = cm.sum(axis=1) - cm.diagonal()
+    TP = cm.diagonal()
+    TN = cm.sum() - (FP + FN + TP)
+
+    total = cm.sum()
+
+    print("\n=== Error Analysis ===")
+    for i, label in enumerate(le.classes_):
+        fp_rate = (FP[i] / total) * 100 if total > 0 else 0
+        fn_rate = (FN[i] / total) * 100 if total > 0 else 0
+        print(f"Class '{label}': False Positives = {FP[i]} ({fp_rate:.2f}%), False Negatives = {FN[i]} ({fn_rate:.2f}%)")
+
+    # Save model
     joblib.dump((clf, le), MODEL_FILE)
-    print(f"Modelo atualizado salvo em: {MODEL_FILE}")
+    print(f"\nUpdated model saved to: {MODEL_FILE}")
 
-# Exemplo de uso
+
 if __name__ == "__main__":
-    # Passe uma lista de novos arquivos CSV para treinar
-    incremental_train(["natural_air3.csv", "natural_air.csv", "natural_air2.csv", "alcohol.csv", "cigarro.csv"])
+    # Example: train with one dataset
+    incremental_train(["ar_cigarro.csv"])
